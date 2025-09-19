@@ -11,6 +11,7 @@ KCL (KittyCAD Language) is a scripting language developed by KittyCAD for defini
 ### Currently Supported:
 - ✅ **Sketches**: Lines, arcs, circles, and splines
 - ✅ **Features**: Extrudes and revolves
+- ✅ **Boolean Operations**: Join (union), Cut (subtract), and Intersect
 - ✅ **Coordinate System**: Automatic conversion from cm to mm
 - ✅ **File Export**: User-friendly file dialog for saving KCL files
 - ✅ **Error Handling**: Comprehensive error reporting and logging
@@ -73,6 +74,21 @@ const Rectangle = startSketchOn("XY")
 const extrude_1 = Rectangle |> extrude(10.0, %)
 ```
 
+### Boolean Operations Example
+
+For designs with boolean operations (Combine features), the script generates:
+
+```kcl
+// Two extrudes
+extrude1 = sketch1 |> extrude(length = 10.0)
+extrude2 = sketch2 |> extrude(length = 15.0)
+
+// Boolean operations
+solid001 = union(extrude1, extrude2)        // Join operation
+solid002 = subtract(extrude1, tools = extrude2)  // Cut operation  
+solid003 = intersect(extrude1, extrude2)    // Intersect operation
+```
+
 ## KCL Language Reference
 
 ### Basic Concepts
@@ -92,6 +108,11 @@ KCL uses a pipe operator (`|>`) to chain operations together, creating a functio
 #### 3D Operations
 - `extrude(distance, %)` - Extrude a profile by distance
 - `revolve(angle, %)` - Revolve a profile by angle
+
+#### Boolean Operations
+- `union(solid1, solid2, ...)` - Join multiple solids together
+- `subtract(target, tools = tool1)` - Subtract tool solid(s) from target solid
+- `intersect(solid1, solid2, ...)` - Keep only the intersecting volume of solids
 
 ### Coordinate System
 

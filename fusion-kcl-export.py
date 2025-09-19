@@ -196,6 +196,8 @@ class KCLExporter:
             self.export_extrude(feature)
         elif feature.objectType == adsk.fusion.RevolveFeature.classType():
             self.export_revolve(feature)
+        elif feature.objectType == adsk.fusion.CombineFeature.classType():
+            self.export_combine(feature)
         # Add more feature types as needed
     
     def export_extrude(self, extrude: adsk.fusion.ExtrudeFeature):
@@ -312,6 +314,151 @@ class KCLExporter:
             self.add_comment(f"Error processing revolve: {str(e)}")
         
         self.add_line("")
+    
+    def export_combine(self, combine: adsk.fusion.CombineFeature):
+        """Export a combine feature to KCL (boolean operations)."""
+        self.add_comment(f"Combine: {combine.name}")
+        
+        try:
+            # Try to get the operation type safely
+            operation = None
+            operation_name = None
+            
+            try:
+                operation = combine.operation
+                self.add_comment(f"Raw operation value: {operation}")
+            except Exception as op_error:
+                self.add_comment(f"Could not get operation type: {str(op_error)}")
+            
+            # Map Fusion 360 operations to KCL operations
+            if operation == adsk.fusion.FeatureOperations.JoinFeatureOperation:
+                operation_name = "union"
+                self.add_comment("Boolean operation: Join (Union)")
+            elif operation == adsk.fusion.FeatureOperations.CutFeatureOperation:
+                operation_name = "subtract"
+                self.add_comment("Boolean operation: Cut (Subtract)")
+            elif operation == adsk.fusion.FeatureOperations.IntersectFeatureOperation:
+                operation_name = "intersect"
+                self.add_comment("Boolean operation: Intersect")
+            else:
+                self.add_comment(f"Unsupported or unknown boolean operation: {operation}")
+                # Try to infer from feature name or use a default
+                feature_name_lower = combine.name.lower()
+                if "join" in feature_name_lower or "union" in feature_name_lower:
+                    operation_name = "union"
+                    self.add_comment("Inferred operation: Union (from feature name)")
+                elif "cut" in feature_name_lower or "subtract" in feature_name_lower:
+                    operation_name = "subtract"
+                    self.add_comment("Inferred operation: Subtract (from feature name)")
+                elif "intersect" in feature_name_lower:
+                    operation_name = "intersect"
+                    self.add_comment("Inferred operation: Intersect (from feature name)")
+                else:
+                    operation_name = "union"  # Default fallback
+                    self.add_comment("Using default operation: Union")
+            
+            # Try to get target and tool bodies safely
+            target_bodies = None
+            tool_bodies = None
+            
+            try:
+                target_bodies = combine.targetBody
+                self.add_comment(f"Target body found: {target_bodies is not None}")
+            except Exception as target_error:
+                self.add_comment(f"Could not get target body: {str(target_error)}")
+            
+            try:
+                tool_bodies = combine.toolBodies
+                self.add_comment(f"Tool bodies count: {tool_bodies.count if tool_bodies else 'None'}")
+            except Exception as tool_error:
+                self.add_comment(f"Could not get tool bodies: {str(tool_error)}")
+            
+            # If we can't get the bodies, create a generic boolean operation
+            if not target_bodies or not tool_bodies:
+                self.add_comment("Cannot access combine bodies - generating generic boolean operation")
+                # Use the previous two features as a fallback
+                prev_feature_1 = f"extrude{self.get_unique_id()}"
+                prev_feature_2 = f"extrude{self.get_unique_id()}"
+                
+                solid_id = str(self.get_unique_id()).zfill(3)  # Format as 001, 002, etc.
+                if operation_name == "subtract":
+                    self.add_line(f"solid{solid_id} = {operation_name}(extrude1, tools = extrude2)")
+                else:
+                    self.add_line(f"solid{solid_id} = {operation_name}(extrude1, extrude2)")
+                return
+            
+            # Find the source features for the bodies
+            target_feature_name = self.find_body_source_feature(target_bodies)
+            
+            if tool_bodies and tool_bodies.count > 0:
+                # Get tool body feature names
+                tool_feature_names = []
+                for i in range(tool_bodies.count):
+                    tool_body = tool_bodies.item(i)
+                    tool_name = self.find_body_source_feature(tool_body)
+                    if tool_name:
+                        tool_feature_names.append(tool_name)
+                
+                if target_feature_name and tool_feature_names:
+                    # Generate KCL boolean operation
+                    solid_id = str(self.get_unique_id()).zfill(3)  # Format as 001, 002, etc.
+                    if operation_name == "subtract":
+                        # subtract(target, tools = [tool1, tool2, ...])
+                        if len(tool_feature_names) == 1:
+                            tools_str = tool_feature_names[0]
+                        else:
+                            tools_str = f"[{', '.join(tool_feature_names)}]"
+                        self.add_line(f"solid{solid_id} = {operation_name}({target_feature_name}, tools = {tools_str})")
+                    else:
+                        # union(feature1, feature2, ...) or intersect(feature1, feature2, ...)
+                        all_features = [target_feature_name] + tool_feature_names
+                        features_str = ', '.join(all_features)
+                        self.add_line(f"solid{solid_id} = {operation_name}({features_str})")
+                else:
+                    self.add_comment("Warning: Could not identify source features - using generic names")
+                    # Fallback with generic feature names
+                    solid_id = str(self.get_unique_id()).zfill(3)  # Format as 001, 002, etc.
+                    if operation_name == "subtract":
+                        self.add_line(f"solid{solid_id} = {operation_name}(extrude1, tools = extrude2)")
+                    else:
+                        self.add_line(f"solid{solid_id} = {operation_name}(extrude1, extrude2)")
+            else:
+                self.add_comment("Warning: No tool bodies found for combine operation")
+                
+        except Exception as e:
+            self.add_comment(f"Error processing combine: {str(e)}")
+            # Provide a fallback boolean operation
+            self.add_comment("Generating fallback boolean operation")
+            solid_id = str(self.get_unique_id()).zfill(3)  # Format as 001, 002, etc.
+            self.add_line(f"solid{solid_id} = union(extrude1, extrude2)")
+        
+        self.add_line("")
+    
+    def find_body_source_feature(self, body):
+        """Find the source feature that created a body."""
+        try:
+            # Try to get the body's creation feature
+            if hasattr(body, 'createdBy') and body.createdBy:
+                feature = body.createdBy
+                if feature.objectType == adsk.fusion.ExtrudeFeature.classType():
+                    return f"extrude{self.get_feature_id(feature)}"
+                elif feature.objectType == adsk.fusion.RevolveFeature.classType():
+                    return f"revolve{self.get_feature_id(feature)}"
+                else:
+                    # For other feature types, use a generic name
+                    return f"feature{self.get_feature_id(feature)}"
+            else:
+                return None
+        except:
+            return None
+    
+    def get_feature_id(self, feature) -> str:
+        """Get a consistent ID for a feature."""
+        # Use the feature's entity token as a unique identifier
+        try:
+            return str(hash(feature.entityToken) % 1000)
+        except:
+            return self.get_unique_id()
     
     def get_plane_name(self, plane) -> str:
         """Get the KCL plane name for a Fusion 360 reference plane."""
