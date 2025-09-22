@@ -106,7 +106,7 @@ class KCLExporter:
         # Start with the first point - using correct KCL syntax
         self.add_line(f"|> startProfile(at = [{first_point[0]}, {first_point[1]}], %)")
         
-        # Export sketch curves
+        # Export sketch curves in the correct order
         self.export_sketch_curve(sketch.sketchCurves)
         
         # Close the profile
@@ -116,22 +116,43 @@ class KCLExporter:
         self.add_line("")
     
     def export_sketch_curve(self, curves):
-        """Export sketch curves to KCL."""
-        # Handle lines
-        for line in curves.sketchLines:
-            self.export_line(line)
+        """Export sketch curves to KCL in the correct order."""
+        # Collect all curves into a single list with their types
+        all_curves = []
         
-        # Handle arcs
-        for arc in curves.sketchArcs:
-            self.export_arc(arc)
+        # Add lines
+        for i in range(curves.sketchLines.count):
+            line = curves.sketchLines.item(i)
+            all_curves.append(('line', line))
         
-        # Handle circles
-        for circle in curves.sketchCircles:
-            self.export_circle(circle)
+        # Add arcs
+        for i in range(curves.sketchArcs.count):
+            arc = curves.sketchArcs.item(i)
+            all_curves.append(('arc', arc))
         
-        # Handle splines
-        for spline in curves.sketchFittedSplines:
-            self.export_spline(spline)
+        # Add circles (these are typically standalone, not part of profiles)
+        for i in range(curves.sketchCircles.count):
+            circle = curves.sketchCircles.item(i)
+            all_curves.append(('circle', circle))
+        
+        # Add splines
+        for i in range(curves.sketchFittedSplines.count):
+            spline = curves.sketchFittedSplines.item(i)
+            all_curves.append(('spline', spline))
+        
+        # Sort curves by their order in the sketch profile
+        sorted_curves = self.sort_curves_by_connectivity(all_curves)
+        
+        # Export curves in the correct order
+        for curve_type, curve in sorted_curves:
+            if curve_type == 'line':
+                self.export_line(curve)
+            elif curve_type == 'arc':
+                self.export_arc(curve)
+            elif curve_type == 'circle':
+                self.export_circle(curve)
+            elif curve_type == 'spline':
+                self.export_spline(curve)
     
     def export_line(self, line: adsk.fusion.SketchLine):
         """Export a sketch line to KCL."""
@@ -154,14 +175,33 @@ class KCLExporter:
         start_x, start_y = self.convert_point_2d(start)
         end_x, end_y = self.convert_point_2d(end)
         
-        # Calculate radius and angle for KCL arc
-        radius = self.convert_length(arc.radius)
-        sweep_angle = math.degrees(arc.sweepAngle)
+        # Get arc geometry to access properties
+        arc_geometry = arc.geometry
+        
+        # Calculate radius and angles for KCL arc
+        radius = self.convert_length(arc_geometry.radius)
+        
+        # Get start and end angles from Arc3D geometry (in radians)
+        start_angle_rad = arc_geometry.startAngle
+        end_angle_rad = arc_geometry.endAngle
+        
+        # Calculate sweep angle
+        sweep_angle_rad = end_angle_rad - start_angle_rad
+        
+        # Ensure the sweep angle is positive (handle cases where arc crosses 0 degrees)
+        if sweep_angle_rad < 0:
+            sweep_angle_rad += 2 * math.pi
+        
+        # Convert to degrees for KCL
+        start_angle_deg = math.degrees(start_angle_rad)
+        end_angle_deg = math.degrees(end_angle_rad)
+        
+        # Ensure end angle is greater than start angle for KCL
+        if end_angle_deg < start_angle_deg:
+            end_angle_deg += 360
         
         # Use arc syntax from bone-plate example - need start and end angles
-        start_angle = 0  # Default start angle
-        end_angle = sweep_angle
-        self.add_line(f"  |> arc(angleStart = {start_angle}, angleEnd = {end_angle}, radius = {radius}, %)")
+        self.add_line(f"  |> arc(angleStart = {start_angle_deg}, angleEnd = {end_angle_deg}, radius = {radius}, %)")
     
     def export_circle(self, circle: adsk.fusion.SketchCircle):
         """Export a sketch circle to KCL."""
@@ -513,6 +553,81 @@ class KCLExporter:
         self._counter += 1
         return str(self._counter)
     
+    def sort_curves_by_connectivity(self, all_curves):
+        """Sort curves by their connectivity to form a continuous profile."""
+        if not all_curves:
+            return []
+        
+        # For simple cases, try to sort by following the chain of connected points
+        sorted_curves = []
+        remaining_curves = all_curves.copy()
+        
+        # Start with the first curve
+        if remaining_curves:
+            current_curve = remaining_curves.pop(0)
+            sorted_curves.append(current_curve)
+            
+            # Get the end point of the current curve
+            current_end_point = self.get_curve_end_point(current_curve[1])
+            
+            # Try to find connected curves
+            while remaining_curves and current_end_point:
+                found_next = False
+                
+                for i, (curve_type, curve) in enumerate(remaining_curves):
+                    curve_start_point = self.get_curve_start_point(curve)
+                    
+                    # Check if this curve starts where the previous one ended
+                    if self.points_are_close(current_end_point, curve_start_point):
+                        # Found the next curve in the chain
+                        next_curve = remaining_curves.pop(i)
+                        sorted_curves.append(next_curve)
+                        current_end_point = self.get_curve_end_point(next_curve[1])
+                        found_next = True
+                        break
+                
+                if not found_next:
+                    # No connected curve found, add remaining curves as-is
+                    sorted_curves.extend(remaining_curves)
+                    break
+        
+        return sorted_curves
+    
+    def get_curve_start_point(self, curve):
+        """Get the start point of a curve."""
+        try:
+            if hasattr(curve, 'startSketchPoint'):
+                return curve.startSketchPoint.geometry
+            elif hasattr(curve, 'centerSketchPoint'):
+                # For circles, use center point
+                return curve.centerSketchPoint.geometry
+        except:
+            pass
+        return None
+    
+    def get_curve_end_point(self, curve):
+        """Get the end point of a curve."""
+        try:
+            if hasattr(curve, 'endSketchPoint'):
+                return curve.endSketchPoint.geometry
+            elif hasattr(curve, 'centerSketchPoint'):
+                # For circles, use center point (circles don't have end points)
+                return curve.centerSketchPoint.geometry
+        except:
+            pass
+        return None
+    
+    def points_are_close(self, point1, point2, tolerance=1e-6):
+        """Check if two points are close enough to be considered the same."""
+        if not point1 or not point2:
+            return False
+        try:
+            dx = abs(point1.x - point2.x)
+            dy = abs(point1.y - point2.y)
+            return dx < tolerance and dy < tolerance
+        except:
+            return False
+
     def find_sketch_start_point(self, curves) -> tuple:
         """Find a good starting point for the sketch profile."""
         # Try to find the first line's start point
