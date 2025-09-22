@@ -20,10 +20,11 @@ ui = app.userInterface
 class KCLExporter:
     """Main class for exporting Fusion 360 designs to KCL format."""
     
-    def __init__(self):
+    def __init__(self, debug_planes=False):
         self.kcl_content = []
         self.units = "mm"  # Default units
         self.indent_level = 0
+        self.debug_planes = debug_planes  # Enable detailed plane debugging
         
     def add_line(self, line: str):
         """Add a line to the KCL content with proper indentation."""
@@ -83,6 +84,9 @@ class KCLExporter:
         # Get the sketch plane
         plane_name = self.get_plane_name(sketch.referencePlane)
         sketch_var_name = self.get_safe_name(sketch.name)
+        
+        # Store current sketch plane for coordinate conversion
+        self.current_sketch_plane = plane_name
         
         # Debug: Check if sketch has any curves
         total_curves = (sketch.sketchCurves.sketchLines.count + 
@@ -276,6 +280,8 @@ class KCLExporter:
             if distance is not None:
                 # Find the associated sketch/profile
                 profile_obj = extrude.profile
+                sketch_plane = None
+                
                 if profile_obj:
                     # Handle both single profile and ObjectCollection
                     if hasattr(profile_obj, 'objectType') and profile_obj.objectType == adsk.core.ObjectCollection.classType():
@@ -284,7 +290,11 @@ class KCLExporter:
                             first_profile = profile_obj.item(0)
                             if hasattr(first_profile, 'parentSketch') and first_profile.parentSketch:
                                 sketch_name = self.get_safe_name(first_profile.parentSketch.name)
-                                self.add_line(f"extrude{self.get_unique_id()} = {sketch_name} |> extrude(length = {distance})")
+                                sketch_plane = self.get_plane_name(first_profile.parentSketch.referencePlane)
+                                
+                                # Adjust extrude distance for coordinate system differences
+                                adjusted_distance = self.adjust_extrude_distance(distance, sketch_plane)
+                                self.add_line(f"extrude{self.get_unique_id()} = {sketch_name} |> extrude(length = {adjusted_distance})")
                             else:
                                 self.add_line(f"extrude{self.get_unique_id()} = sketch |> extrude(length = {distance})")
                         else:
@@ -293,7 +303,11 @@ class KCLExporter:
                         # Single profile
                         if hasattr(profile_obj, 'parentSketch') and profile_obj.parentSketch:
                             sketch_name = self.get_safe_name(profile_obj.parentSketch.name)
-                            self.add_line(f"extrude{self.get_unique_id()} = {sketch_name} |> extrude(length = {distance})")
+                            sketch_plane = self.get_plane_name(profile_obj.parentSketch.referencePlane)
+                            
+                            # Adjust extrude distance for coordinate system differences
+                            adjusted_distance = self.adjust_extrude_distance(distance, sketch_plane)
+                            self.add_line(f"extrude{self.get_unique_id()} = {sketch_name} |> extrude(length = {adjusted_distance})")
                         else:
                             self.add_line(f"extrude{self.get_unique_id()} = sketch |> extrude(length = {distance})")
                 else:
@@ -502,30 +516,143 @@ class KCLExporter:
     
     def get_plane_name(self, plane) -> str:
         """Get the KCL plane name for a Fusion 360 reference plane."""
-        if plane.objectType == adsk.fusion.ConstructionPlane.classType():
-            # Handle construction planes
-            return "XY"  # Default fallback
-        
-        # Handle standard planes
-        plane_name = str(plane)
-        if "XY" in plane_name:
+        try:
+            # Add debugging information about the plane (if enabled)
+            if self.debug_planes:
+                self.add_comment(f"Plane debug - Object type: {plane.objectType}")
+                self.add_comment(f"Plane debug - String representation: {str(plane)}")
+            
+            # Check if this is a BRepFace (planar face)
+            if plane.objectType == adsk.fusion.BRepFace.classType():
+                # Get the face's surface geometry
+                surface = plane.geometry
+                if surface.objectType == adsk.core.Plane.classType():
+                    # Get the plane's normal vector
+                    normal = surface.normal
+                    if self.debug_planes:
+                        self.add_comment(f"Face normal vector: ({normal.x:.3f}, {normal.y:.3f}, {normal.z:.3f})")
+                    
+                    # Determine plane based on normal vector
+                    # XY plane has normal (0, 0, 1) or (0, 0, -1)
+                    # XZ plane has normal (0, 1, 0) or (0, -1, 0)  
+                    # YZ plane has normal (1, 0, 0) or (-1, 0, 0)
+                    
+                    tolerance = 0.1
+                    if abs(normal.z) > (1.0 - tolerance):
+                        if self.debug_planes:
+                            self.add_comment("Detected XY plane (normal points in Z direction)")
+                        return "XY"
+                    elif abs(normal.y) > (1.0 - tolerance):
+                        if self.debug_planes:
+                            self.add_comment("Detected XZ plane (normal points in Y direction)")
+                        return "XZ"
+                    elif abs(normal.x) > (1.0 - tolerance):
+                        if self.debug_planes:
+                            self.add_comment("Detected YZ plane (normal points in X direction)")
+                        return "YZ"
+                    else:
+                        if self.debug_planes:
+                            self.add_comment(f"Custom plane orientation - defaulting to XY")
+                        return "XY"
+                else:
+                    if self.debug_planes:
+                        self.add_comment(f"Non-planar surface type: {surface.objectType}")
+                    return "XY"
+            
+            # Check if this is a ConstructionPlane
+            elif plane.objectType == adsk.fusion.ConstructionPlane.classType():
+                # Get the construction plane's geometry
+                plane_geometry = plane.geometry
+                if plane_geometry.objectType == adsk.core.Plane.classType():
+                    normal = plane_geometry.normal
+                    if self.debug_planes:
+                        self.add_comment(f"Construction plane normal: ({normal.x:.3f}, {normal.y:.3f}, {normal.z:.3f})")
+                    
+                    tolerance = 0.1
+                    if abs(normal.z) > (1.0 - tolerance):
+                        if self.debug_planes:
+                            self.add_comment("Construction plane aligned with XY")
+                        return "XY"
+                    elif abs(normal.y) > (1.0 - tolerance):
+                        if self.debug_planes:
+                            self.add_comment("Construction plane aligned with XZ")
+                        return "XZ"
+                    elif abs(normal.x) > (1.0 - tolerance):
+                        if self.debug_planes:
+                            self.add_comment("Construction plane aligned with YZ")
+                        return "YZ"
+                    else:
+                        if self.debug_planes:
+                            self.add_comment("Custom construction plane orientation - defaulting to XY")
+                        return "XY"
+                else:
+                    if self.debug_planes:
+                        self.add_comment("Construction plane has non-standard geometry")
+                    return "XY"
+            
+            # Fallback: try to parse the string representation for standard planes
+            else:
+                plane_str = str(plane).upper()
+                if self.debug_planes:
+                    self.add_comment(f"Using string parsing fallback for plane: {plane_str}")
+                
+                # Look for origin plane indicators
+                if "XY" in plane_str or "ORIGIN XY" in plane_str:
+                    if self.debug_planes:
+                        self.add_comment("String parsing detected XY plane")
+                    return "XY"
+                elif "XZ" in plane_str or "ORIGIN XZ" in plane_str:
+                    if self.debug_planes:
+                        self.add_comment("String parsing detected XZ plane")
+                    return "XZ"
+                elif "YZ" in plane_str or "ORIGIN YZ" in plane_str:
+                    if self.debug_planes:
+                        self.add_comment("String parsing detected YZ plane")
+                    return "YZ"
+                else:
+                    if self.debug_planes:
+                        self.add_comment("String parsing failed - defaulting to XY")
+                    return "XY"
+                    
+        except Exception as e:
+            if self.debug_planes:
+                self.add_comment(f"Error in plane detection: {str(e)}")
+                self.add_comment("Using XY plane as fallback")
             return "XY"
-        elif "XZ" in plane_name:
-            return "XZ"
-        elif "YZ" in plane_name:
-            return "YZ"
-        else:
-            return "XY"  # Default fallback
     
     def convert_point_2d(self, point) -> tuple:
-        """Convert a 2D point to KCL format."""
+        """Convert a 2D point to KCL format, accounting for coordinate system differences."""
         x = self.convert_length(point.x)
         y = self.convert_length(point.y)
+        
+        # Handle coordinate system differences between Fusion 360 and KCL
+        if hasattr(self, 'current_sketch_plane'):
+            if self.current_sketch_plane == "XZ":
+                # For XZ plane, flip the Y coordinate to match KCL coordinate system
+                original_y = y
+                y = -y
+                # Only log the first coordinate flip to avoid spam
+                if self.debug_planes and not hasattr(self, '_xz_flip_logged'):
+                    self.add_comment(f"XZ plane: Flipping Y coordinates (e.g., {original_y} -> {y})")
+                    self._xz_flip_logged = True
+        
         return (x, y)
     
     def convert_length(self, length_cm: float) -> float:
         """Convert length from Fusion 360 internal units (cm) to mm."""
         return round(length_cm * 10, 3)  # Convert cm to mm and round to 3 decimal places
+    
+    def adjust_extrude_distance(self, distance: float, sketch_plane: str) -> float:
+        """Adjust extrude distance for coordinate system differences between Fusion 360 and KCL."""
+        if sketch_plane == "XZ":
+            # For XZ plane, flip the extrude direction to match KCL coordinate system
+            adjusted_distance = -distance
+            if self.debug_planes:
+                self.add_comment(f"XZ plane: Flipped extrude direction from {distance} to {adjusted_distance}")
+            return adjusted_distance
+        else:
+            # For XY and YZ planes, no adjustment needed
+            return distance
     
     def get_safe_name(self, name: str) -> str:
         """Convert a name to a safe KCL variable name in lowerCamelCase."""
@@ -666,8 +793,8 @@ def run(_context: str):
             ui.messageBox('Active product is not a Fusion 360 design.')
             return
         
-        # Create the exporter
-        exporter = KCLExporter()
+        # Create the exporter (set debug_planes=True for detailed plane debugging)
+        exporter = KCLExporter(debug_planes=True)
         
         # Export the design to KCL
         kcl_content = exporter.export_design(design)
