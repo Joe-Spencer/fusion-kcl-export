@@ -88,6 +88,9 @@ class KCLExporter:
         # Store current sketch plane for coordinate conversion
         self.current_sketch_plane = plane_name
         
+        # Reset profile tracking for this sketch
+        self.current_profile_position = None
+        
         # Debug: Check if sketch has any curves
         total_curves = (sketch.sketchCurves.sketchLines.count + 
                        sketch.sketchCurves.sketchArcs.count + 
@@ -100,17 +103,11 @@ class KCLExporter:
             self.add_comment(f"Skipping {sketch.name} - no curves found")
             return
         
-        # Start the sketch with proper KCL syntax (no const/let)
-        first_point = self.find_sketch_start_point(sketch.sketchCurves)
-        
         # Create the sketch and profile in one chain
         self.add_line(f'{sketch_var_name} = startSketchOn({plane_name})')
         self.indent_level += 1
         
-        # Start with the first point - using correct KCL syntax
-        self.add_line(f"|> startProfile(at = [{first_point[0]}, {first_point[1]}], %)")
-        
-        # Export sketch curves in the correct order
+        # Export sketch curves in the correct order (this will handle the starting point)
         self.export_sketch_curve(sketch.sketchCurves)
         
         # Close the profile
@@ -147,8 +144,36 @@ class KCLExporter:
         # Sort curves by their order in the sketch profile
         sorted_curves = self.sort_curves_by_connectivity(all_curves)
         
+        if not sorted_curves:
+            return
+        
+        # Get the starting point from the first curve
+        first_curve_type, first_curve = sorted_curves[0]
+        if first_curve_type == 'circle':
+            # For circles, use center point
+            if hasattr(first_curve, 'centerSketchPoint'):
+                start_point_geom = first_curve.centerSketchPoint.geometry
+            else:
+                start_point_geom = None
+        else:
+            # For other curves, use start point
+            if hasattr(first_curve, 'startSketchPoint'):
+                start_point_geom = first_curve.startSketchPoint.geometry
+            else:
+                start_point_geom = None
+        
+        if start_point_geom:
+            start_point = self.convert_point_2d(start_point_geom)
+            self.add_line(f"|> startProfile(at = [{start_point[0]}, {start_point[1]}], %)")
+            # Track the current position in the profile
+            self.current_profile_position = start_point
+        else:
+            # Fallback
+            self.add_line(f"|> startProfile(at = [0.0, 0.0], %)")
+            self.current_profile_position = (0.0, 0.0)
+        
         # Export curves in the correct order
-        for curve_type, curve in sorted_curves:
+        for i, (curve_type, curve) in enumerate(sorted_curves):
             if curve_type == 'line':
                 self.export_line(curve)
             elif curve_type == 'arc':
@@ -166,8 +191,28 @@ class KCLExporter:
         start_x, start_y = self.convert_point_2d(start)
         end_x, end_y = self.convert_point_2d(end)
         
+        # Check for zero-length lines
+        tolerance = 0.001  # 0.001mm tolerance
+        line_length = ((end_x - start_x) ** 2 + (end_y - start_y) ** 2) ** 0.5
+        
+        if line_length < tolerance:
+            if self.debug_planes:
+                self.add_comment(f"Skipping zero-length line: [{start_x}, {start_y}] -> [{end_x}, {end_y}]")
+            return
+        
+        # Check if this endpoint is the same as our current position (duplicate endpoint)
+        if hasattr(self, 'current_profile_position') and self.current_profile_position:
+            current_x, current_y = self.current_profile_position
+            if abs(end_x - current_x) < tolerance and abs(end_y - current_y) < tolerance:
+                if self.debug_planes:
+                    self.add_comment(f"Skipping duplicate endpoint: [{end_x}, {end_y}] (already at [{current_x}, {current_y}])")
+                return
+        
         # Use KCL line function with proper labeled arguments (like the bone-plate example)
         self.add_line(f"  |> line(endAbsolute = [{end_x}, {end_y}], %)")
+        
+        # Update current position
+        self.current_profile_position = (end_x, end_y)
     
     def export_arc(self, arc: adsk.fusion.SketchArc):
         """Export a sketch arc to KCL."""
@@ -206,6 +251,9 @@ class KCLExporter:
         
         # Use arc syntax from bone-plate example - need start and end angles
         self.add_line(f"  |> arc(angleStart = {start_angle_deg}, angleEnd = {end_angle_deg}, radius = {radius}, %)")
+        
+        # Update current position to arc end point
+        self.current_profile_position = (end_x, end_y)
     
     def export_circle(self, circle: adsk.fusion.SketchCircle):
         """Export a sketch circle to KCL."""
@@ -218,6 +266,9 @@ class KCLExporter:
         # For circles, use the correct KCL syntax (center and radius/diameter)
         diameter_mm = radius_mm * 2
         self.add_line(f"  |> circle(center = [{center_x}, {center_y}], diameter = {diameter_mm}, %)")
+        
+        # For circles, the current position remains at the center (circles are complete shapes)
+        self.current_profile_position = (center_x, center_y)
     
     def export_spline(self, spline: adsk.fusion.SketchFittedSpline):
         """Export a sketch spline to KCL (simplified as connected lines)."""
@@ -232,7 +283,15 @@ class KCLExporter:
         for i in range(len(points) - 1):
             start = points[i]
             end = points[i + 1]
-            self.add_line(f"  |> line(endAbsolute = [{end[0]}, {end[1]}], %)")
+            
+            # Check for zero-length segments in splines too
+            tolerance = 0.001
+            segment_length = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
+            
+            if segment_length >= tolerance:
+                self.add_line(f"  |> line(endAbsolute = [{end[0]}, {end[1]}], %)")
+                # Update current position
+                self.current_profile_position = (end[0], end[1])
     
     def export_feature(self, feature):
         """Export a Fusion 360 feature to KCL."""
@@ -685,38 +744,110 @@ class KCLExporter:
         if not all_curves:
             return []
         
-        # For simple cases, try to sort by following the chain of connected points
-        sorted_curves = []
-        remaining_curves = all_curves.copy()
+        if self.debug_planes:
+            self.add_comment(f"Sorting {len(all_curves)} curves for connectivity")
         
-        # Start with the first curve
-        if remaining_curves:
-            current_curve = remaining_curves.pop(0)
-            sorted_curves.append(current_curve)
+        # Build a connectivity map
+        connectivity_map = {}
+        curve_endpoints = {}
+        
+        # First pass: collect all endpoints and build connectivity
+        for i, (curve_type, curve) in enumerate(all_curves):
+            start_point = self.get_curve_start_point(curve)
+            end_point = self.get_curve_end_point(curve)
             
-            # Get the end point of the current curve
-            current_end_point = self.get_curve_end_point(current_curve[1])
+            if start_point and end_point:
+                curve_endpoints[i] = {
+                    'start': start_point,
+                    'end': end_point,
+                    'curve': (curve_type, curve),
+                    'used': False
+                }
+                
+                if self.debug_planes:
+                    start_converted = self.convert_point_2d(start_point)
+                    end_converted = self.convert_point_2d(end_point)
+                    self.add_comment(f"Curve {i} ({curve_type}): {start_converted} -> {end_converted}")
+        
+        # Find the best starting curve (leftmost, then bottommost point)
+        best_start_curve_idx = None
+        best_start_point = None
+        
+        for i, curve_info in curve_endpoints.items():
+            start_point = curve_info['start']
+            start_converted = self.convert_point_2d(start_point)
             
-            # Try to find connected curves
-            while remaining_curves and current_end_point:
-                found_next = False
+            if best_start_point is None or (
+                start_converted[0] < best_start_point[0] or 
+                (abs(start_converted[0] - best_start_point[0]) < 0.001 and start_converted[1] < best_start_point[1])
+            ):
+                best_start_point = start_converted
+                best_start_curve_idx = i
+        
+        if best_start_curve_idx is None:
+            if self.debug_planes:
+                self.add_comment("No valid starting curve found, using original order")
+            return all_curves
+        
+        if self.debug_planes:
+            self.add_comment(f"Starting with curve {best_start_curve_idx} at point {best_start_point}")
+        
+        # Trace the profile
+        sorted_curves = []
+        current_curve_idx = best_start_curve_idx
+        current_end_point = curve_endpoints[current_curve_idx]['end']
+        
+        # Add the starting curve
+        sorted_curves.append(curve_endpoints[current_curve_idx]['curve'])
+        curve_endpoints[current_curve_idx]['used'] = True
+        
+        # Follow the chain
+        while len(sorted_curves) < len(all_curves):
+            found_next = False
+            
+            # Look for a curve that starts where we ended
+            for i, curve_info in curve_endpoints.items():
+                if curve_info['used']:
+                    continue
                 
-                for i, (curve_type, curve) in enumerate(remaining_curves):
-                    curve_start_point = self.get_curve_start_point(curve)
-                    
-                    # Check if this curve starts where the previous one ended
-                    if self.points_are_close(current_end_point, curve_start_point):
-                        # Found the next curve in the chain
-                        next_curve = remaining_curves.pop(i)
-                        sorted_curves.append(next_curve)
-                        current_end_point = self.get_curve_end_point(next_curve[1])
-                        found_next = True
-                        break
-                
-                if not found_next:
-                    # No connected curve found, add remaining curves as-is
-                    sorted_curves.extend(remaining_curves)
+                # Check if this curve starts where the current one ends
+                if self.points_are_close(current_end_point, curve_info['start']):
+                    sorted_curves.append(curve_info['curve'])
+                    curve_info['used'] = True
+                    current_end_point = curve_info['end']
+                    current_curve_idx = i
+                    found_next = True
+                    if self.debug_planes:
+                        end_converted = self.convert_point_2d(current_end_point)
+                        self.add_comment(f"Connected to curve {i}, now at {end_converted}")
                     break
+                
+                # Check if this curve ends where the current one ends (reverse direction)
+                elif self.points_are_close(current_end_point, curve_info['end']):
+                    # We need to reverse this curve's direction conceptually
+                    sorted_curves.append(curve_info['curve'])
+                    curve_info['used'] = True
+                    current_end_point = curve_info['start']
+                    current_curve_idx = i
+                    found_next = True
+                    if self.debug_planes:
+                        end_converted = self.convert_point_2d(current_end_point)
+                        self.add_comment(f"Connected to curve {i} (reversed), now at {end_converted}")
+                    break
+            
+            if not found_next:
+                if self.debug_planes:
+                    remaining = len(all_curves) - len(sorted_curves)
+                    self.add_comment(f"Could not find next connected curve, {remaining} curves remaining")
+                # Add any remaining curves
+                for i, curve_info in curve_endpoints.items():
+                    if not curve_info['used']:
+                        sorted_curves.append(curve_info['curve'])
+                        curve_info['used'] = True
+                break
+        
+        if self.debug_planes:
+            self.add_comment(f"Final curve order: {len(sorted_curves)} curves sorted")
         
         return sorted_curves
     
@@ -757,23 +888,61 @@ class KCLExporter:
 
     def find_sketch_start_point(self, curves) -> tuple:
         """Find a good starting point for the sketch profile."""
-        # Try to find the first line's start point
-        if curves.sketchLines.count > 0:
-            first_line = curves.sketchLines.item(0)
-            start_point = first_line.startSketchPoint.geometry
-            return self.convert_point_2d(start_point)
+        # Collect all curves to find the best starting point
+        all_curves = []
         
-        # Try to find the first arc's start point
-        if curves.sketchArcs.count > 0:
-            first_arc = curves.sketchArcs.item(0)
-            start_point = first_arc.startSketchPoint.geometry
-            return self.convert_point_2d(start_point)
+        # Add lines
+        for i in range(curves.sketchLines.count):
+            line = curves.sketchLines.item(i)
+            all_curves.append(('line', line))
         
-        # Try to find a circle center (though circles don't have start points)
-        if curves.sketchCircles.count > 0:
-            first_circle = curves.sketchCircles.item(0)
-            center_point = first_circle.centerSketchPoint.geometry
-            return self.convert_point_2d(center_point)
+        # Add arcs
+        for i in range(curves.sketchArcs.count):
+            arc = curves.sketchArcs.item(i)
+            all_curves.append(('arc', arc))
+        
+        # Add circles (these are typically standalone, not part of profiles)
+        for i in range(curves.sketchCircles.count):
+            circle = curves.sketchCircles.item(i)
+            all_curves.append(('circle', circle))
+        
+        # Add splines
+        for i in range(curves.sketchFittedSplines.count):
+            spline = curves.sketchFittedSplines.item(i)
+            all_curves.append(('spline', spline))
+        
+        if not all_curves:
+            return (0.0, 0.0)
+        
+        # Find the leftmost, then bottommost point among all curve start points
+        best_point = None
+        best_converted = None
+        
+        for curve_type, curve in all_curves:
+            if curve_type == 'circle':
+                # For circles, use center point
+                if hasattr(curve, 'centerSketchPoint'):
+                    point = curve.centerSketchPoint.geometry
+                else:
+                    continue
+            else:
+                # For other curves, use start point
+                if hasattr(curve, 'startSketchPoint'):
+                    point = curve.startSketchPoint.geometry
+                else:
+                    continue
+            
+            converted = self.convert_point_2d(point)
+            
+            if best_converted is None or (
+                converted[0] < best_converted[0] or 
+                (abs(converted[0] - best_converted[0]) < 0.001 and converted[1] < best_converted[1])
+            ):
+                best_point = point
+                best_converted = converted
+        
+        if best_converted:
+            return best_converted
         
         # Default fallback
         return (0.0, 0.0)
