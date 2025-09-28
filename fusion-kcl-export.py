@@ -22,11 +22,11 @@ class KCLExporter:
     
     def __init__(self, debug_planes=False):
         self.kcl_content = []
-        self.units = "mm"  # Default units
         self.indent_level = 0
         self.debug_planes = debug_planes  # Enable detailed plane debugging
         self.body_to_feature_map = {}  # Maps BRepBody entity token to the KCL feature name that created it
         self.feature_to_kcl_name = {}  # Maps Fusion feature entity token to KCL variable name
+        self.units = "mm"  # Will be set during export_design
         
     def add_line(self, line: str):
         """Add a line to the KCL content with proper indentation."""
@@ -37,9 +37,102 @@ class KCLExporter:
         """Add a comment to the KCL content."""
         self.add_line(f"// {comment}")
     
+    def detect_document_units(self) -> str:
+        """Detect the current document units using Fusion API."""
+        try:
+            # Get the active design
+            design = app.activeProduct
+            if not design or design.objectType != adsk.fusion.Design.classType():
+                if self.debug_planes:
+                    self.add_comment("No active design found, defaulting to mm")
+                return "mm"  # Default fallback
+            
+            # Try fusionUnitsManager first (returns enum values)
+            try:
+                fusion_units_manager = design.fusionUnitsManager
+                length_unit_enum = fusion_units_manager.distanceDisplayUnits
+                if self.debug_planes:
+                    self.add_comment(f"fusionUnitsManager.distanceDisplayUnits enum: {length_unit_enum}")
+                
+                # Convert enum values to KCL unit strings
+                if length_unit_enum == adsk.fusion.DistanceUnits.InchDistanceUnits:
+                    if self.debug_planes:
+                        self.add_comment("Detected inches from enum")
+                    return "in"
+                elif length_unit_enum == adsk.fusion.DistanceUnits.MillimeterDistanceUnits:
+                    if self.debug_planes:
+                        self.add_comment("Detected millimeters from enum")
+                    return "mm"
+                elif length_unit_enum == adsk.fusion.DistanceUnits.CentimeterDistanceUnits:
+                    if self.debug_planes:
+                        self.add_comment("Detected centimeters from enum")
+                    return "cm"
+                elif length_unit_enum == adsk.fusion.DistanceUnits.MeterDistanceUnits:
+                    if self.debug_planes:
+                        self.add_comment("Detected meters from enum")
+                    return "m"
+                elif length_unit_enum == adsk.fusion.DistanceUnits.FootDistanceUnits:
+                    if self.debug_planes:
+                        self.add_comment("Detected feet from enum")
+                    return "ft"
+                else:
+                    if self.debug_planes:
+                        self.add_comment(f"Unsupported enum value {length_unit_enum}, defaulting to mm")
+                    return "mm"
+                    
+            except Exception as e1:
+                if self.debug_planes:
+                    self.add_comment(f"fusionUnitsManager failed: {str(e1)}")
+                # Fallback to regular unitsManager
+                try:
+                    units_manager = design.unitsManager
+                    length_unit_string = units_manager.defaultLengthUnits
+                    if self.debug_planes:
+                        self.add_comment(f"unitsManager.defaultLengthUnits: '{length_unit_string}'")
+                    
+                    # Convert string values to KCL unit strings
+                    if length_unit_string == "in" or length_unit_string == "inch":
+                        if self.debug_planes:
+                            self.add_comment("Detected inches from string")
+                        return "in"
+                    elif length_unit_string == "mm" or length_unit_string == "millimeter":
+                        if self.debug_planes:
+                            self.add_comment("Detected millimeters from string")
+                        return "mm"
+                    elif length_unit_string == "cm" or length_unit_string == "centimeter":
+                        if self.debug_planes:
+                            self.add_comment("Detected centimeters from string")
+                        return "cm"
+                    elif length_unit_string == "m" or length_unit_string == "meter":
+                        if self.debug_planes:
+                            self.add_comment("Detected meters from string")
+                        return "m"
+                    elif length_unit_string == "ft" or length_unit_string == "foot":
+                        if self.debug_planes:
+                            self.add_comment("Detected feet from string")
+                        return "ft"
+                    else:
+                        if self.debug_planes:
+                            self.add_comment(f"Unsupported string unit '{length_unit_string}', defaulting to mm")
+                        return "mm"
+                        
+                except Exception as e2:
+                    if self.debug_planes:
+                        self.add_comment(f"unitsManager also failed: {str(e2)}")
+                    return "mm"
+                
+        except Exception as e:
+            # If detection fails, default to mm
+            if self.debug_planes:
+                self.add_comment(f"Unit detection failed: {str(e)}, defaulting to mm")
+            return "mm"
+    
     def export_design(self, design: adsk.fusion.Design) -> str:
         """Export a Fusion 360 design to KCL format."""
         self.kcl_content = []
+        
+        # Detect units first
+        self.units = self.detect_document_units()
         
         # Add header comment and settings (like bone-plate example)
         self.add_comment("Generated from Fusion 360")
@@ -48,7 +141,7 @@ class KCLExporter:
         
         # Add KCL settings
         self.add_line("// Set units")
-        self.add_line("@settings(defaultLengthUnit = mm)")
+        self.add_line(f"@settings(defaultLengthUnit = {self.units})")
         self.add_line("")
         
         # Process the root component
@@ -112,10 +205,11 @@ class KCLExporter:
         self.indent_level += 1
         
         # Export sketch curves in the correct order (this will handle the starting point)
-        self.export_sketch_curve(sketch.sketchCurves)
+        has_circles = self.export_sketch_curve(sketch.sketchCurves)
         
-        # Close the profile
-        self.add_line("|> close(%)")
+        # Only close the profile if it's not already closed (circles are self-closing)
+        if not has_circles:
+            self.add_line("|> close(%)")
         
         self.indent_level -= 1
         self.add_line("")
@@ -124,6 +218,7 @@ class KCLExporter:
         """Export sketch curves to KCL in the correct order."""
         # Collect all curves into a single list with their types
         all_curves = []
+        has_circles = False
         
         # Add lines
         for i in range(curves.sketchLines.count):
@@ -139,6 +234,7 @@ class KCLExporter:
         for i in range(curves.sketchCircles.count):
             circle = curves.sketchCircles.item(i)
             all_curves.append(('circle', circle))
+            has_circles = True
         
         # Add splines
         for i in range(curves.sketchFittedSplines.count):
@@ -149,7 +245,7 @@ class KCLExporter:
         sorted_curves = self.sort_curves_by_connectivity(all_curves)
         
         if not sorted_curves:
-            return
+            return has_circles
         
         # Get the starting point from the first curve
         first_curve_type, first_curve = sorted_curves[0]
@@ -186,6 +282,8 @@ class KCLExporter:
                 self.export_circle(curve)
             elif curve_type == 'spline':
                 self.export_spline(curve)
+        
+        return has_circles
     
     def export_line(self, line: adsk.fusion.SketchLine):
         """Export a sketch line to KCL."""
@@ -196,7 +294,7 @@ class KCLExporter:
         end_x, end_y = self.convert_point_2d(end)
         
         # Check for zero-length lines
-        tolerance = 0.001  # 0.001mm tolerance
+        tolerance = 0.001  # 0.001 unit tolerance
         line_length = ((end_x - start_x) ** 2 + (end_y - start_y) ** 2) ** 0.5
         
         if line_length < tolerance:
@@ -232,7 +330,7 @@ class KCLExporter:
         arc_geometry = arc.geometry
         
         # Calculate radius and angles for KCL arc
-        radius = self.convert_length(arc_geometry.radius)
+        radius = self.convert_internal_to_display_units(arc_geometry.radius)
         
         # Get start and end angles from Arc3D geometry (in radians)
         start_angle_rad = arc_geometry.startAngle
@@ -265,11 +363,11 @@ class KCLExporter:
         radius = circle.radius
         
         center_x, center_y = self.convert_point_2d(center)
-        radius_mm = self.convert_length(radius)
+        radius_value = self.convert_internal_to_display_units(radius)
         
         # For circles, use the correct KCL syntax (center and radius/diameter)
-        diameter_mm = radius_mm * 2
-        self.add_line(f"  |> circle(center = [{center_x}, {center_y}], diameter = {diameter_mm}, %)")
+        diameter_value = radius_value * 2
+        self.add_line(f"  |> circle(center = [{center_x}, {center_y}], diameter = {diameter_value}, %)")
         
         # For circles, the current position remains at the center (circles are complete shapes)
         self.current_profile_position = (center_x, center_y)
@@ -318,22 +416,25 @@ class KCLExporter:
             
             # Handle different extent types
             if extent_one.objectType == adsk.fusion.DistanceExtentDefinition.classType():
-                distance = self.convert_length(extent_one.distance.value)
+                raw_distance = extent_one.distance.value
+                if self.debug_planes:
+                    self.add_comment(f"Raw extrude distance (cm): {raw_distance}")
+                distance = self.convert_internal_to_display_units(raw_distance)
             elif extent_one.objectType == adsk.fusion.ThroughAllExtentDefinition.classType():
                 # For through-all, we'll use a default distance
-                distance = 100.0  # Default 100mm
-                self.add_comment("Note: Through-all extent converted to 100mm")
+                distance = 100.0  # Default 100 units
+                self.add_comment("Note: Through-all extent converted to 100 units")
             elif extent_one.objectType == adsk.fusion.ToEntityExtentDefinition.classType():
                 # For to-entity, we'll use a default distance
-                distance = 50.0  # Default 50mm
-                self.add_comment("Note: To-entity extent converted to 50mm")
+                distance = 50.0  # Default 50 units
+                self.add_comment("Note: To-entity extent converted to 50 units")
             elif extent_one.objectType == adsk.fusion.SymmetricExtentDefinition.classType():
                 # For symmetric extent, get the distance and use it
-                distance = self.convert_length(extent_one.distance.value)
+                distance = self.convert_internal_to_display_units(extent_one.distance.value)
                 self.add_comment("Note: Symmetric extent - using total distance")
             elif extent_one.objectType == adsk.fusion.TwoSidesExtentDefinition.classType():
                 # For two-sided extent, use the first side distance
-                distance = self.convert_length(extent_one.distanceOne.value)
+                distance = self.convert_internal_to_display_units(extent_one.distanceOne.value)
                 self.add_comment("Note: Two-sided extent - using first side distance only")
             else:
                 # Log the actual extent type for debugging
@@ -688,8 +789,12 @@ class KCLExporter:
     
     def convert_point_2d(self, point) -> tuple:
         """Convert a 2D point to KCL format, accounting for coordinate system differences."""
-        x = self.convert_length(point.x)
-        y = self.convert_length(point.y)
+        if self.debug_planes:
+            self.add_comment(f"Raw point values (cm): x={point.x}, y={point.y}")
+        
+        # Convert from internal centimeters to display units
+        x = self.convert_internal_to_display_units(point.x)
+        y = self.convert_internal_to_display_units(point.y)
         
         # Handle coordinate system differences between Fusion 360 and KCL
         if hasattr(self, 'current_sketch_plane'):
@@ -704,9 +809,29 @@ class KCLExporter:
         
         return (x, y)
     
-    def convert_length(self, length_cm: float) -> float:
-        """Convert length from Fusion 360 internal units (cm) to mm."""
-        return round(length_cm * 10, 3)  # Convert cm to mm and round to 3 decimal places
+    def convert_internal_to_display_units(self, value_cm: float) -> float:
+        """Convert internal centimeter values to display units."""
+        try:
+            # Get the active design
+            design = app.activeProduct
+            if not design or design.objectType != adsk.fusion.Design.classType():
+                return round(value_cm, 3)  # Fallback to cm
+            
+            # Get the units manager
+            units_manager = design.unitsManager
+            
+            # Convert from centimeters to display units
+            display_value = units_manager.convert(value_cm, 'cm', units_manager.defaultLengthUnits)
+            
+            if self.debug_planes:
+                self.add_comment(f"Converted {value_cm} cm to {display_value} {units_manager.defaultLengthUnits}")
+            
+            return round(display_value, 3)
+            
+        except Exception as e:
+            if self.debug_planes:
+                self.add_comment(f"Unit conversion failed: {str(e)}, using raw value")
+            return round(value_cm, 3)  # Fallback to raw value
     
     def adjust_extrude_distance(self, distance: float, sketch_plane: str) -> float:
         """Adjust extrude distance for coordinate system differences between Fusion 360 and KCL."""
