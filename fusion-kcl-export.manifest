@@ -1,0 +1,13 @@
+{
+	"autodeskProduct":	"Fusion",
+	"type":	"addin",
+	"author":	"Joseph Spencer",
+	"description":	{
+		"":	"Export Fusion 360 designs to KCL format with single file and batch processing capabilities. Supports exporting sketches, features, and components from entire project folders."
+	},
+	"version":	"1.0.0",
+	"runOnStartup":	false,
+	"supportedOS":	"windows|mac",
+	"editEnabled":	true,
+	"iconFilename":	"AddInIcon.svg"
+}

@@ -1,242 +1,138 @@
-# Fusion 360 to KCL Export Script
+# Fusion 360 KCL Export Add-in
 
-This script exports Fusion 360 designs to KCL (KittyCAD Language) format, attempting to preserve as much of the feature tree, timeline, parameters, and constraints as possible.
-
-## Overview
-
-KCL (KittyCAD Language) is a scripting language developed by KittyCAD for defining geometry and interacting efficiently with their Geometry Engine. This script converts Fusion 360 designs into KCL format, enabling interoperability between Fusion 360 and the KittyCAD ecosystem.
+A Fusion 360 add-in for exporting designs to KCL (KittyCAD Language) format with both single file and batch processing capabilities. Built on top of the proven KCL export script logic.
 
 ## Features
 
-### Currently Supported:
-- ✅ **Sketches**: Lines, arcs, circles, and splines
-- ✅ **Features**: Extrudes and revolves
-- ✅ **Boolean Operations**: Join (union), Cut (subtract), and Intersect
-- ✅ **Coordinate System**: Automatic conversion from cm to mm
-- ✅ **File Export**: User-friendly file dialog for saving KCL files
-- ✅ **Error Handling**: Comprehensive error reporting and logging
-
-### Planned Features:
-- 🔄 **Additional Features**: Fillets, chamfers, patterns
-- 🔄 **Constraints**: Dimensional and geometric constraints
-- 🔄 **Parameters**: User parameters and expressions
-- 🔄 **Assembly Support**: Multi-component designs
-- 🔄 **Material Properties**: Material assignments
+- **Single File Export**: Export the currently active design to KCL format
+- **Batch Processing**: Export entire project folders containing multiple .f3d files
+- **Configurable Export Options**: Choose to include/exclude sketches and features
+- **User-Friendly Interface**: Integrated dialog boxes with file/folder selection
+- **Progress Tracking**: Real-time progress updates during batch processing
 
 ## Installation
 
-1. Copy the script files to your Fusion 360 Scripts folder:
-   - Windows: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\Scripts\`
-   - macOS: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/Scripts/`
+1. Copy the entire `fusion-kcl-export` folder to your Fusion 360 Add-ins directory:
+   - **Windows**: `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\`
+   - **Mac**: `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/`
 
-2. The script folder should contain:
-   ```
-   fusion-kcl-export/
-   ├── fusion-kcl-export.py
-   ├── fusion-kcl-export.manifest
-   ├── ScriptIcon.svg
-   └── README.md
-   ```
+2. Start Fusion 360
+
+3. Go to **Tools** > **Add-Ins**
+
+4. Click on the **Add-Ins** tab
+
+5. Find "Fusion KCL Export" in the list and click **Run**
 
 ## Usage
 
-### Running the Script
+### Single File Export
 
-1. Open Fusion 360
-2. Navigate to **Utilities** → **ADD-INS** → **Scripts and Add-Ins**
-3. Under **Scripts**, find "fusion-kcl-export"
-4. Click **Run**
+1. Open a design in Fusion 360
+2. Click the **Export to KCL** button in the toolbar (under Scripts & Add-Ins panel)
+3. In the dialog:
+   - Click **Browse...** to select the output file location
+   - Click **OK** to export
 
-### Export Process
+### Batch Processing
 
-1. **Design Selection**: The script automatically uses the currently active design
-2. **File Dialog**: Choose where to save your KCL file
-3. **Export**: The script processes your design and generates the KCL file
+1. Click the **Batch Export to KCL** button in the toolbar
+2. In the dialog:
+   - Click **Browse Folder...** to select the project folder containing .f3d files
+   - Click **Browse Output...** to select the output folder for KCL files
+   - Monitor progress in the progress text box
+   - Click **OK** to start batch processing
 
-### Example Output
+## KCL Output Format
 
-For a simple rectangular extrusion, the script generates KCL like this:
+The add-in exports designs to proper KCL (KittyCAD Language) format with functional programming syntax:
 
 ```kcl
 // Generated from Fusion 360
 // Design: MyDesign.f3d
 
+// Set units
+@settings(defaultLengthUnit = mm)
+
 // Component: MyDesign
+// Found 1 sketches and 1 features
+
+// === SKETCHES ===
+// Processing sketch 1/1: Rectangle
 // Sketch: Rectangle
-const Rectangle = startSketchOn("XY")
-  |> startProfileAt([0, 0], %)
-  |> lineTo([50.0, 0], %)
-  |> lineTo([50.0, 25.0], %)
-  |> lineTo([0, 25.0], %)
+rectangle = startSketchOn(XY)
+  |> startProfile(at = [0.0, 0.0], %)
+  |> line(endAbsolute = [50.0, 0.0], %)
+  |> line(endAbsolute = [50.0, 25.0], %)
+  |> line(endAbsolute = [0.0, 25.0], %)
   |> close(%)
 
+// === FEATURES ===
+// Processing feature 1/1: Extrude1
 // Extrude: Extrude1
-const extrude_1 = Rectangle |> extrude(10.0, %)
+extrude1 = rectangle |> extrude(length = 10.0)
 ```
 
-### Boolean Operations Example
+## Supported Elements
 
-For designs with boolean operations (Combine features), the script generates:
+### Sketches
+- **Lines**: Converted to KCL `line()` functions with absolute endpoints
+- **Circles**: Exported as `circle()` with center and diameter
+- **Arcs**: Converted to `arc()` with start/end angles and radius
+- **Splines**: Approximated as connected line segments
+- **Connectivity**: Smart curve ordering to maintain profile continuity
 
-```kcl
-// Two extrudes
-extrude1 = sketch1 |> extrude(length = 10.0)
-extrude2 = sketch2 |> extrude(length = 15.0)
+### Features
+- **Extrudes**: Full support for distance, through-all, symmetric, and two-sided extents
+- **Revolves**: Support for angle and full-sweep operations
+- **Boolean Operations**: Join (union), Cut (subtract), and Intersect operations
+- **Coordinate Systems**: Automatic conversion between Fusion 360 and KCL coordinate systems
 
-// Boolean operations
-solid001 = union(extrude1, extrude2)        // Join operation
-solid002 = subtract(extrude1, tools = extrude2)  // Cut operation  
-solid003 = intersect(extrude1, extrude2)    // Intersect operation
-```
+### Advanced Capabilities
+- **Plane Detection**: Automatic detection of XY, XZ, and YZ sketch planes
+- **Unit Conversion**: Automatic conversion from Fusion 360's cm to KCL's mm
+- **Feature Tracking**: Maintains relationships between sketches and features for boolean operations
+- **Error Handling**: Comprehensive error handling with detailed logging
 
-## KCL Language Reference
+## Development
 
-### Basic Concepts
+The add-in is structured using the standard Fusion 360 add-in template with integrated script logic:
 
-KCL uses a pipe operator (`|>`) to chain operations together, creating a functional programming approach to CAD modeling.
+- `fusion-kcl-export.py` - Main add-in entry point
+- `commands/commandDialog/` - Single file export command
+- `commands/batchProcess/` - Batch processing command  
+- `fusion-kcl-export-script/` - Standalone script with core KCL export logic
+- `config.py` - Configuration and global variables
+- `lib/fusionAddInUtils/` - Utility functions for add-in development
 
-### Supported Operations
+### Core Export Logic
 
-#### Sketching
-- `startSketchOn("plane")` - Start a new sketch on a reference plane
-- `startProfileAt([x, y], %)` - Begin a profile at coordinates
-- `lineTo([x, y], %)` - Draw a line to coordinates
-- `arc({center: [x, y], radius: r, angleStart: a1, angleEnd: a2}, %)` - Draw an arc
-- `circle([x, y], radius)` - Create a circle
-- `close(%)` - Close the current profile
-
-#### 3D Operations
-- `extrude(distance, %)` - Extrude a profile by distance
-- `revolve(angle, %)` - Revolve a profile by angle
-
-#### Boolean Operations
-- `union(solid1, solid2, ...)` - Join multiple solids together
-- `subtract(target, tools = tool1)` - Subtract tool solid(s) from target solid
-- `intersect(solid1, solid2, ...)` - Keep only the intersecting volume of solids
-
-### Coordinate System
-
-- Fusion 360 uses centimeters internally
-- KCL typically uses millimeters
-- The script automatically converts units (cm → mm)
-
-## Technical Details
-
-### Architecture
-
-The script is organized around the `KCLExporter` class with the following key methods:
-
-- `export_design()` - Main entry point for design export
-- `export_component()` - Processes individual components
-- `export_sketch()` - Converts sketches to KCL
-- `export_feature()` - Converts features (extrudes, revolves, etc.)
-
-### Coordinate Conversion
-
-```python
-def convert_length(self, length_cm: float) -> float:
-    """Convert length from Fusion 360 internal units (cm) to mm."""
-    return round(length_cm * 10, 3)
-```
-
-### Name Sanitization
-
-KCL variable names must follow specific rules. The script automatically:
-- Replaces invalid characters with underscores
-- Ensures names start with letters or underscores
-- Handles duplicate names with unique IDs
-
-## Limitations
-
-### Current Limitations
-
-1. **Sketch Complexity**: Complex sketches with many constraints may not export perfectly
-2. **Feature Support**: Only basic extrudes and revolves are currently supported
-3. **Assembly Models**: Multi-component assemblies are processed as single components
-4. **Materials**: Material properties are not exported
-5. **Splines**: Converted to line segments (approximation)
-
-### Known Issues
-
-- Construction geometry is not exported
-- Sketch constraints are not preserved
-- User parameters are not included
-- Timeline dependencies may not be maintained
-
-## Contributing
-
-### Development Setup
-
-The script is written in Python using the Fusion 360 API. Key dependencies:
-- `adsk.core` - Fusion 360 core API
-- `adsk.fusion` - Fusion 360 design API
-- Standard Python libraries: `math`, `os`, `traceback`, `re`
-
-### Adding New Features
-
-To add support for new Fusion 360 features:
-
-1. Add a new export method in the `KCLExporter` class
-2. Update the `export_feature()` method to handle the new feature type
-3. Add appropriate KCL syntax generation
-4. Test with sample models
-
-### Code Style
-
-- Follow PEP 8 Python style guidelines
-- Use type hints where possible
-- Include comprehensive docstrings
-- Add error handling for API calls
+The heart of the add-in is the `KCLExporter` class in `fusion-kcl-export-script/fusion-kcl-export.py`, which contains the complete and proven export logic. The add-in commands import this script directly to ensure modularity and avoid code duplication. This ensures that the batch processing uses exactly the same export functionality as the standalone script.
 
 ## Troubleshooting
 
 ### Common Issues
 
-**"No active design found"**
-- Ensure you have a design open in Fusion 360
-- The design must be in Design workspace (not CAM or Simulation)
+1. **No .f3d files found**: Ensure the selected project folder contains Fusion 360 design files (.f3d extension)
 
-**"Export failed" errors**
-- Check the Text Commands window for detailed error messages
-- Verify the design doesn't contain unsupported features
-- Try with a simpler test model first
+2. **Export failed**: Check that:
+   - Output folder has write permissions
+   - Fusion 360 files are not corrupted
+   - Sufficient disk space is available
 
-**Invalid KCL output**
-- The generated KCL may need manual adjustment
-- Complex geometries might require simplification
-- Check the KittyCAD documentation for syntax updates
+3. **Add-in not appearing**: Verify that:
+   - Files are in the correct Add-ins directory
+   - Fusion 360 has been restarted after installation
+   - Add-in is enabled in the Add-Ins dialog
 
-### Debugging
+### Debug Mode
 
-Enable detailed logging by checking the Fusion 360 Text Commands window:
-- **Utilities** → **Text Commands**
-- Error messages and stack traces appear here
-
-## Resources
-
-### KittyCAD Documentation
-- [KCL Language Reference](https://zoo.dev/docs/kcl-book/)
-- [KCL Standard Library](https://zoo.dev/docs/kcl-std/)
-- [KittyCAD GitHub](https://github.com/orgs/KittyCAD/repositories)
-
-### Fusion 360 API
-- [Fusion 360 API Documentation](https://help.autodesk.com/view/fusion360/ENU/?guid=GUID-A92A4B10-3781-4925-94C6-47DA85A4F65A)
-- [API Samples](https://github.com/AutodeskFusion360/Fusion360Samples)
+Set `DEBUG = True` in `config.py` to enable detailed logging in the Text Command window.
 
 ## License
 
-This script is provided as-is for educational and development purposes. Please refer to Autodesk's terms of service for Fusion 360 API usage and KittyCAD's licensing terms for KCL usage.
+This add-in is provided as-is for educational and development purposes.
 
-## Version History
+## Author
 
-### v1.0.0 (Current)
-- Initial release
-- Basic sketch export (lines, arcs, circles, splines)
-- Extrude and revolve feature support
-- Unit conversion (cm to mm)
-- File dialog interface
-- Error handling and logging
-
----
-
-**Note**: This is an experimental script. Always verify the generated KCL files before using them in production workflows. The KCL language and KittyCAD ecosystem are rapidly evolving, so syntax and features may change.
+Joseph Spencer - Initial development and KCL export functionality
