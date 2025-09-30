@@ -353,8 +353,8 @@ def batch_export_to_kcl(project_folder, output_folder, progress_text=None):
                 # Export using the script's KCLExporter
                 futil.log(f"Starting KCL export...")
                 
-                # Create the exporter (use the same settings as the script)
-                exporter = KCLExporter(debug_planes=True)
+                # Create the exporter with clean output (no debug)
+                exporter = KCLExporter(debug_planes=False)
                 
                 # Export the design
                 kcl_content = exporter.export_design(opened_design)

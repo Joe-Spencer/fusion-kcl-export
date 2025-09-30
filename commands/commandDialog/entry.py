@@ -127,8 +127,8 @@ def command_execute(args: adsk.core.CommandEventArgs):
 
     # Export to KCL using the real exporter
     try:
-        # Create the exporter with debug enabled based on config
-        exporter = KCLExporter(debug_planes=config.DEBUG)
+        # Create the exporter with clean output (no debug)
+        exporter = KCLExporter(debug_planes=False)
         
         # Export the design to KCL
         kcl_content = exporter.export_design(design)

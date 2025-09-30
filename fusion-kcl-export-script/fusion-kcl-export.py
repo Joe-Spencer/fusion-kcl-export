@@ -65,15 +65,18 @@ class KCLExporter:
                     return "mm"
                 elif length_unit_enum == adsk.fusion.DistanceUnits.CentimeterDistanceUnits:
                     if self.debug_planes:
-                        self.add_comment("Detected centimeters from enum")
+                        if self.debug_planes:
+                            self.add_comment("Detected centimeters from enum")
                     return "cm"
                 elif length_unit_enum == adsk.fusion.DistanceUnits.MeterDistanceUnits:
                     if self.debug_planes:
-                        self.add_comment("Detected meters from enum")
+                        if self.debug_planes:
+                            self.add_comment("Detected meters from enum")
                     return "m"
                 elif length_unit_enum == adsk.fusion.DistanceUnits.FootDistanceUnits:
                     if self.debug_planes:
-                        self.add_comment("Detected feet from enum")
+                        if self.debug_planes:
+                            self.add_comment("Detected feet from enum")
                     return "ft"
                 else:
                     if self.debug_planes:
@@ -82,7 +85,8 @@ class KCLExporter:
                     
             except Exception as e1:
                 if self.debug_planes:
-                    self.add_comment(f"fusionUnitsManager failed: {str(e1)}")
+                    if self.debug_planes:
+                        self.add_comment(f"fusionUnitsManager failed: {str(e1)}")
                 # Fallback to regular unitsManager
                 try:
                     units_manager = design.unitsManager
@@ -161,7 +165,8 @@ class KCLExporter:
             self.add_comment("=== SKETCHES ===")
             for i in range(component.sketches.count):
                 sketch = component.sketches.item(i)
-                self.add_comment(f"Processing sketch {i+1}/{component.sketches.count}: {sketch.name}")
+                if self.debug_planes:
+                    self.add_comment(f"Processing sketch {i+1}/{component.sketches.count}: {sketch.name}")
                 self.export_sketch(sketch)
         
         # Export features AFTER sketches
@@ -171,7 +176,8 @@ class KCLExporter:
             # Process all features using proper Fusion 360 API
             for i in range(component.features.count):
                 feature = component.features.item(i)
-                self.add_comment(f"Processing feature {i+1}/{component.features.count}: {feature.name} ({feature.objectType})")
+                if self.debug_planes:
+                    self.add_comment(f"Processing feature {i+1}/{component.features.count}: {feature.name} ({feature.objectType})")
                 self.export_feature(feature)
     
     def export_sketch(self, sketch: adsk.fusion.Sketch):
@@ -194,7 +200,8 @@ class KCLExporter:
                        sketch.sketchCurves.sketchCircles.count +
                        sketch.sketchCurves.sketchFittedSplines.count)
         
-        self.add_comment(f"Sketch has {total_curves} total curves (lines: {sketch.sketchCurves.sketchLines.count}, arcs: {sketch.sketchCurves.sketchArcs.count}, circles: {sketch.sketchCurves.sketchCircles.count})")
+        if self.debug_planes:
+            self.add_comment(f"Sketch has {total_curves} total curves (lines: {sketch.sketchCurves.sketchLines.count}, arcs: {sketch.sketchCurves.sketchArcs.count}, circles: {sketch.sketchCurves.sketchCircles.count})")
         
         if total_curves == 0:
             self.add_comment(f"Skipping {sketch.name} - no curves found")
@@ -418,7 +425,8 @@ class KCLExporter:
             if extent_one.objectType == adsk.fusion.DistanceExtentDefinition.classType():
                 raw_distance = extent_one.distance.value
                 if self.debug_planes:
-                    self.add_comment(f"Raw extrude distance (cm): {raw_distance}")
+                    if self.debug_planes:
+                        self.add_comment(f"Raw extrude distance (cm): {raw_distance}")
                 distance = self.convert_internal_to_display_units(raw_distance)
             elif extent_one.objectType == adsk.fusion.ThroughAllExtentDefinition.classType():
                 # For through-all, we'll use a default distance
@@ -558,13 +566,15 @@ class KCLExporter:
                     operation_name = "subtract"
                 elif operation == adsk.fusion.FeatureOperations.IntersectFeatureOperation:
                     operation_name = "intersect"
-                self.add_comment(f"Boolean operation: {operation_name}")
+                if self.debug_planes:
+                    self.add_comment(f"Boolean operation: {operation_name}")
             except Exception as op_error:
                 self.add_comment(f"Could not get operation type: {str(op_error)}")
             
             # Since Fusion API body access fails consistently, use logical deduction
             # Based on typical CAD workflow patterns
-            self.add_comment("Using logical deduction for combine operation (Fusion API body access unreliable)")
+            if self.debug_planes:
+                self.add_comment("Using logical deduction for combine operation (Fusion API body access unreliable)")
             
             # Count how many combines we've processed so far
             combine_count = 0
@@ -572,7 +582,8 @@ class KCLExporter:
                 if 'solid' in line and ('subtract' in line or 'union' in line or 'intersect' in line):
                     combine_count += 1
             
-            self.add_comment(f"This is combine operation #{combine_count + 1}")
+            if self.debug_planes:
+                self.add_comment(f"This is combine operation #{combine_count + 1}")
             
             # Get all extrude names in order
             extrude_names = []
@@ -581,7 +592,8 @@ class KCLExporter:
                     extrude_names.append(kcl_name)
             extrude_names.sort(key=lambda x: int(x.replace('extrude', '')))
             
-            self.add_comment(f"Available extrudes: {extrude_names}")
+            if self.debug_planes:
+                self.add_comment(f"Available extrudes: {extrude_names}")
             
             # Logical deduction based on typical CAD patterns:
             # - First extrude creates main body
@@ -618,7 +630,8 @@ class KCLExporter:
                             if extrude_name in line:
                                 used_extrudes.add(extrude_name)
                 
-                self.add_comment(f"Used extrudes so far: {sorted(used_extrudes)}")
+                if self.debug_planes:
+                    self.add_comment(f"Used extrudes so far: {sorted(used_extrudes)}")
                 
                 # Find the first unused extrude (excluding the main body extrude1)
                 unused_extrudes = [e for e in extrude_names if e not in used_extrudes and e != extrude_names[0]]
@@ -640,7 +653,8 @@ class KCLExporter:
                 else:
                     self.add_line(f"{solid_var_name} = {operation_name}({target_kcl_name}, {tool_kcl_name})")
                 
-                self.add_comment(f"SUCCESS: Generated logical boolean operation")
+                if self.debug_planes:
+                    self.add_comment(f"SUCCESS: Generated logical boolean operation")
                 
             else:
                 self.add_comment("Could not deduce combine parameters - SKIPPING")
@@ -854,7 +868,8 @@ class KCLExporter:
             
             
             if self.debug_planes:
-                self.add_comment(f"Attempting to track bodies for {kcl_var_name}")
+                if self.debug_planes:
+                    self.add_comment(f"Attempting to track bodies for {kcl_var_name}")
             
             # Check the extrude operation type
             operation_type = None
@@ -877,7 +892,8 @@ class KCLExporter:
                     operation_name = f"Unknown({operation_type})"
                 
                 if self.debug_planes:
-                    self.add_comment(f"Extrude operation type: {operation_name}")
+                    if self.debug_planes:
+                        self.add_comment(f"Extrude operation type: {operation_name}")
             except Exception as op_error:
                 if self.debug_planes:
                     self.add_comment(f"Could not get operation type: {str(op_error)}")
@@ -894,7 +910,8 @@ class KCLExporter:
                     if bodies_collection:
                         body_count = bodies_collection.count
                         if self.debug_planes:
-                            self.add_comment(f"Bodies collection has {body_count} bodies")
+                            if self.debug_planes:
+                                self.add_comment(f"Bodies collection has {body_count} bodies")
                         
                         for i in range(body_count):
                             try:
@@ -907,7 +924,8 @@ class KCLExporter:
                                     self.add_comment(f"Error accessing body {i}: {str(body_error)}")
                     else:
                         if self.debug_planes:
-                            self.add_comment("Bodies collection is None or empty")
+                            if self.debug_planes:
+                                self.add_comment("Bodies collection is None or empty")
                 except Exception as bodies_error:
                     if self.debug_planes:
                         self.add_comment(f"Error accessing bodies collection: {str(bodies_error)}")
@@ -943,7 +961,8 @@ class KCLExporter:
                     self.body_to_feature_map[body_token] = kcl_var_name
                     if self.debug_planes:
                         body_name = body.name if hasattr(body, 'name') else 'Unnamed body'
-                        self.add_comment(f"Body tracking: {body_name} (token: {body_token}) created by {kcl_var_name}")
+                        if self.debug_planes:
+                            self.add_comment(f"Body tracking: {body_name} (token: {body_token}) created by {kcl_var_name}")
                 except Exception as mapping_error:
                     if self.debug_planes:
                         self.add_comment(f"Error mapping body: {str(mapping_error)}")
@@ -951,7 +970,8 @@ class KCLExporter:
             # Implement logical body tracking regardless of API access issues
             if len(bodies) == 0:
                 if self.debug_planes:
-                    self.add_comment(f"No bodies found via API - implementing logical tracking for {operation_name} operation")
+                    if self.debug_planes:
+                        self.add_comment(f"No bodies found via API - implementing logical tracking for {operation_name} operation")
                 
                 # Check component body count to understand the model state
                 try:
@@ -969,7 +989,8 @@ class KCLExporter:
                             self.body_to_feature_map[single_body_token] = kcl_var_name
                             bodies.append(single_body)
                             if self.debug_planes:
-                                self.add_comment(f"Logical tracking: {kcl_var_name} associated with single body")
+                                if self.debug_planes:
+                                    self.add_comment(f"Logical tracking: {kcl_var_name} associated with single body")
                             
                         elif body_count > 1:
                             if self.debug_planes:
@@ -1006,7 +1027,8 @@ class KCLExporter:
                         self.add_comment(f"Error in logical body tracking: {str(comp_error)}")
             
             if self.debug_planes:
-                self.add_comment(f"Successfully tracked {len(bodies)} bodies for {kcl_var_name}")
+                if self.debug_planes:
+                    self.add_comment(f"Successfully tracked {len(bodies)} bodies for {kcl_var_name}")
                 if len(bodies) == 0:
                     self.add_comment("WARNING: No bodies were tracked for this extrude - this may cause issues with boolean operations")
                 
