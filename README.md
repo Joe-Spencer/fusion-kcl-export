@@ -5,10 +5,11 @@ A Fusion 360 add-in for exporting designs to KCL (KittyCAD Language) format with
 ## Features
 
 - **Single File Export**: Export the currently active design to KCL format
-- **Batch Processing**: Export entire project folders containing multiple .f3d files
-- **Configurable Export Options**: Choose to include/exclude sketches and features
+- **Batch Processing**: Automatically export all .f3d files from your project folder
+- **Clean Output**: Produces readable KCL code without verbose debug information
 - **User-Friendly Interface**: Integrated dialog boxes with file/folder selection
 - **Progress Tracking**: Real-time progress updates during batch processing
+- **Modular Architecture**: Uses the proven standalone script for consistent export logic
 
 ## Installation
 
@@ -36,16 +37,20 @@ A Fusion 360 add-in for exporting designs to KCL (KittyCAD Language) format with
 
 ### Batch Processing
 
-1. Click the **Batch Export to KCL** button in the toolbar
-2. In the dialog:
-   - Click **Browse Folder...** to select the project folder containing .f3d files
+1. Open any design file in your Fusion 360 project
+2. Click the **Batch Export to KCL** button in the toolbar
+3. In the dialog:
    - Click **Browse Output...** to select the output folder for KCL files
    - Monitor progress in the progress text box
    - Click **OK** to start batch processing
+4. The tool will automatically:
+   - Find the project folder of your currently open design
+   - Export ALL .f3d files in that folder (including the current one)
+   - Save each as a .kcl file in your output folder
 
 ## KCL Output Format
 
-The add-in exports designs to proper KCL (KittyCAD Language) format with functional programming syntax:
+The add-in exports designs to clean, readable KCL (KittyCAD Language) format with functional programming syntax:
 
 ```kcl
 // Generated from Fusion 360
@@ -58,7 +63,6 @@ The add-in exports designs to proper KCL (KittyCAD Language) format with functio
 // Found 1 sketches and 1 features
 
 // === SKETCHES ===
-// Processing sketch 1/1: Rectangle
 // Sketch: Rectangle
 rectangle = startSketchOn(XY)
   |> startProfile(at = [0.0, 0.0], %)
@@ -68,10 +72,11 @@ rectangle = startSketchOn(XY)
   |> close(%)
 
 // === FEATURES ===
-// Processing feature 1/1: Extrude1
 // Extrude: Extrude1
 extrude1 = rectangle |> extrude(length = 10.0)
 ```
+
+The output is clean and concise, with verbose debug information disabled by default for production use.
 
 ## Supported Elements
 
@@ -90,8 +95,9 @@ extrude1 = rectangle |> extrude(length = 10.0)
 
 ### Advanced Capabilities
 - **Plane Detection**: Automatic detection of XY, XZ, and YZ sketch planes
-- **Unit Conversion**: Automatic conversion from Fusion 360's cm to KCL's mm
+- **Unit Conversion**: Automatic conversion between Fusion 360 and KCL units (mm, in, cm, etc.)
 - **Feature Tracking**: Maintains relationships between sketches and features for boolean operations
+- **Smart Project Discovery**: Uses active design to automatically find and process project folders
 - **Error Handling**: Comprehensive error handling with detailed logging
 
 ## Development
@@ -113,12 +119,16 @@ The heart of the add-in is the `KCLExporter` class in `fusion-kcl-export-script/
 
 ### Common Issues
 
-1. **No .f3d files found**: Ensure the selected project folder contains Fusion 360 design files (.f3d extension)
+1. **Batch export finds no files**: 
+   - Ensure you have a design file open in Fusion 360
+   - Make sure the design is saved to a Fusion 360 project folder (not just local)
+   - Verify there are other .f3d files in the same project folder
 
 2. **Export failed**: Check that:
    - Output folder has write permissions
    - Fusion 360 files are not corrupted
    - Sufficient disk space is available
+   - You're logged into Fusion 360 with project access
 
 3. **Add-in not appearing**: Verify that:
    - Files are in the correct Add-ins directory
@@ -127,12 +137,15 @@ The heart of the add-in is the `KCLExporter` class in `fusion-kcl-export-script/
 
 ### Debug Mode
 
-Set `DEBUG = True` in `config.py` to enable detailed logging in the Text Command window.
-
-## License
-
-This add-in is provided as-is for educational and development purposes.
+For troubleshooting, you can enable debug mode by:
+1. Opening `fusion-kcl-export-script/fusion-kcl-export.py`
+2. Changing `KCLExporter(debug_planes=False)` to `KCLExporter(debug_planes=True)` in the add-in commands
+3. This will output detailed conversion information and plane debugging data
 
 ## Author
 
-Joseph Spencer - Initial development and KCL export functionality
+Joseph Spencer
+
+## Special Thanks
+
+Special thanks to the [Zoo.dev](https://zoo.dev) team

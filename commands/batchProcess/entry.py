@@ -99,13 +99,13 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
         'This tool exports all .f3d files from the same project folder as your currently open design.\n\n'
         'HOW IT WORKS:\n'
         '1. Uses your currently active design to find its project folder\n'
-        '2. Finds all other .f3d files in that same folder\n'
+        '2. Finds all .f3d files in that same folder (including the current one)\n'
         '3. Opens each file and exports it to KCL format\n'
-        '4. Skips your currently active design (to avoid conflicts)\n\n'
+        '4. Processes all designs in the project folder\n\n'
         'REQUIREMENTS:\n'
         '• Have a design file open in Fusion 360\n'
         '• Design must be saved to a project folder\n'
-        '• Other .f3d files should be in the same project folder', 8, True)
+        '• All .f3d files in the project folder will be exported', 8, True)
     explanation_text.isFullWidth = True
     
     # Create output folder input
@@ -228,13 +228,13 @@ def get_batch_error_summary():
     issues.append("📋 TROUBLESHOOTING:")
     issues.append("1. Ensure you have a design file open in Fusion 360")
     issues.append("2. Make sure the design is saved to a Fusion 360 project folder")
-    issues.append("3. Verify there are other .f3d files in the same project folder")
+    issues.append("3. Verify there are .f3d files in the same project folder")
     issues.append("4. Check that you have read access to the project folder")
     issues.append("")
     issues.append("💡 How batch export works:")
     issues.append("   • Uses your currently open design to find its project folder")
-    issues.append("   • Exports all other .f3d files from that same folder")
-    issues.append("   • Skips the currently active design (to avoid conflicts)")
+    issues.append("   • Exports all .f3d files from that same folder")
+    issues.append("   • Includes the currently active design in the export")
     
     return "\n".join(issues)
 
@@ -286,21 +286,20 @@ def batch_export_to_kcl(project_folder, output_folder, progress_text=None):
             try:
                 data_file = project_folder_obj.dataFiles.item(i)
                 
-                # Only include Fusion 360 design files (.f3d) that are not the currently active design
+                # Only include Fusion 360 design files (.f3d)
                 if (hasattr(data_file, 'fileExtension') and 
-                    data_file.fileExtension == 'f3d' and 
-                    data_file.id != active_data_file.id):
+                    data_file.fileExtension == 'f3d'):
                     
                     design_files.append(data_file)
                     futil.log(f"  📄 Will export: {data_file.name}")
                 else:
-                    futil.log(f"  ⏭️  Skipping: {data_file.name} (not .f3d or is active design)")
+                    futil.log(f"  ⏭️  Skipping: {data_file.name} (not .f3d file)")
                     
             except Exception as file_error:
                 futil.log(f"Error accessing file {i}: {str(file_error)}")
         
         if not design_files:
-            raise Exception("No other design files found in the same project folder as the active design.")
+            raise Exception("No design files found in the same project folder as the active design.")
         
         futil.log(f"=== FOUND {len(design_files)} DESIGN FILES TO EXPORT ===")
         
