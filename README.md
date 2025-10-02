@@ -80,6 +80,9 @@ The output is clean and concise, with verbose debug information disabled by defa
 
 ## Supported Elements
 
+### Parameters
+- **Dimensional Parameters**: Top Level Parametric data is exported, however relationships are not currently retained
+
 ### Sketches
 - **Lines**: Converted to KCL `line()` functions with absolute endpoints
 - **Circles**: Exported as `circle()` with center and diameter

@@ -148,11 +148,117 @@ class KCLExporter:
         self.add_line(f"@settings(defaultLengthUnit = {self.units})")
         self.add_line("")
         
+        # Export parameters
+        self.export_parameters(design)
+        
         # Process the root component
         root_component = design.rootComponent
         self.export_component(root_component)
         
         return "\n".join(self.kcl_content)
+    
+    def export_parameters(self, design: adsk.fusion.Design):
+        """Export design parameters to KCL format."""
+        try:
+            # Get all parameters in the design
+            all_params = design.allParameters
+            
+            if all_params.count == 0:
+                if self.debug_planes:
+                    self.add_comment("No parameters found in design")
+                return
+            
+            self.add_comment("=== PARAMETERS ===")
+            
+            # Separate user parameters from model parameters
+            user_params = []
+            model_params = []
+            
+            # Also get user parameters specifically
+            user_param_collection = design.userParameters
+            user_param_names = set()
+            for i in range(user_param_collection.count):
+                user_param = user_param_collection.item(i)
+                user_param_names.add(user_param.name)
+            
+            for i in range(all_params.count):
+                param = all_params.item(i)
+                
+                # Check if this is a user parameter by name
+                if param.name in user_param_names:
+                    user_params.append(param)
+                else:
+                    model_params.append(param)
+            
+            # Export user parameters first (these are the important ones)
+            if user_params:
+                self.add_comment("User Parameters:")
+                for param in user_params:
+                    self.export_parameter(param)
+                self.add_line("")
+            
+            # Export model parameters if debug mode is enabled
+            if model_params and self.debug_planes:
+                self.add_comment("Model Parameters (auto-generated):")
+                for param in model_params:
+                    self.export_parameter(param)
+                self.add_line("")
+            
+            if not user_params and not self.debug_planes:
+                self.add_comment("No user parameters defined")
+                self.add_line("")
+                
+        except Exception as e:
+            if self.debug_planes:
+                self.add_comment(f"Error exporting parameters: {str(e)}")
+            self.add_line("")
+    
+    def export_parameter(self, param):
+        """Export a single parameter to KCL format."""
+        try:
+            param_name = param.name
+            param_value = param.value
+            param_units = param.unit if hasattr(param, 'unit') and param.unit else ""
+            param_comment = param.comment if hasattr(param, 'comment') and param.comment else ""
+            param_expression = param.expression if hasattr(param, 'expression') and param.expression else str(param_value)
+            
+            # Clean up parameter name for KCL (replace invalid characters)
+            kcl_param_name = self.get_safe_name(param_name)
+            
+            # Format the parameter value
+            if param_units:
+                # Convert units if needed
+                if param_units in ['cm', 'mm', 'in', 'm', 'ft']:
+                    # Length parameter - convert to display units
+                    display_value = self.convert_internal_to_display_units(param_value)
+                    param_line = f"{kcl_param_name} = {display_value}"
+                else:
+                    # Other units (angles, etc.) - use as is
+                    param_line = f"{kcl_param_name} = {param_value}"
+            else:
+                # Dimensionless parameter
+                param_line = f"{kcl_param_name} = {param_value}"
+            
+            # Add comment with original name and description if different
+            if param_comment or param_name != kcl_param_name:
+                comment_parts = []
+                if param_name != kcl_param_name:
+                    comment_parts.append(f"Original: {param_name}")
+                if param_comment:
+                    comment_parts.append(param_comment)
+                if param_units:
+                    comment_parts.append(f"Units: {param_units}")
+                if param_expression != str(param_value):
+                    comment_parts.append(f"Expression: {param_expression}")
+                
+                if comment_parts:
+                    param_line += f"  // {' | '.join(comment_parts)}"
+            
+            self.add_line(param_line)
+            
+        except Exception as e:
+            if self.debug_planes:
+                self.add_comment(f"Error exporting parameter {param.name}: {str(e)}")
     
     def export_component(self, component: adsk.fusion.Component):
         """Export a Fusion 360 component to KCL."""
